@@ -11,22 +11,21 @@ use App\Exceptions\ShipTooCloseException;
 use App\Models\BattleshipPosition;
 use App\Models\PlayerBattleship;
 use App\Models\PlayerShot;
+use App\Models\Room;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Http\Request;
 
 class BattleshipService
 {
 
-    public function createPlayerBattleship($request, $room) 
+    public function createPlayerBattleship(Request $request, Room $room): string
     {
         DB::beginTransaction();
-        if (!PlayerBattleship::where('battleship_id', $request->input('battleship_id'))->where('player_id', $request->user->id)->exists()) {
-            PlayerBattleship::create([
-                'room_id' => $room->id,
-                'player_id' => $request->user->id,
-                'battleship_id' => $request->input('battleship_id'),
-            ]);
-        };
-        $playerBattleship = PlayerBattleship::with('battleship')->where('battleship_id', $request->input('battleship_id'))->where('player_id', $request->user->id)->first();
+        $playerBattleship = PlayerBattleship::firstOrCreate([
+            'room_id' => $room->id,
+            'player_id' => $request->user->id,
+            'battleship_id' => $request->input('battleship_id'),
+        ],[]);
         
         $this->setPlayerBattleship($playerBattleship, $request, $room);
         DB::commit();
@@ -34,7 +33,8 @@ class BattleshipService
         return "Ship placed succesfully";
     }
 
-    public function shoot($request, $room) {
+    public function shoot(Request $request, Room $room): string
+    {
         $shot_field = $request->input('shoot');
         $message = '';
         $hits = 0;
@@ -52,35 +52,31 @@ class BattleshipService
             })
             ->first();
 
-        if ($battleship !== null) {
+        if (!is_null($battleship)) {
             foreach ($battleship->battleshipPositions as $position) {
-                if ($position->field === $shot_field) {
-                    $position->is_hit = 1;
-                    $position->save();
-                };
-                $position->is_hit === 1 ? $hits++ : '' ;
+                if ($position->field === $shot_field) $position->update(['is_hit' => 1]);
+                if ($position->is_hit === 1) $hits++;
             }
             if ($battleship->battleship->length === $hits) {
-                $battleship->is_destroyed = 1;
-                $battleship->save();
+                $battleship->update(['is_destroyed' => 1]);
                 $message = "Hit and sunk! Enemy has " . $this->getPlayerAliveBattleshipsAmount($room->id, $defender) . " ships left! Your turn again";
             } else {
                 $message = "Hit! Enemy has " . $this->getPlayerAliveBattleshipsAmount($room->id, $defender) . " ships left! Your turn again";
             };
         } else {
-            $room->player_turn = $defender;
-            $room->save();
+            $room->update(['player_turn' => $defender]);
             $message = "Miss! " . $this->getPlayerAliveBattleshipsAmount($room->id, $defender) . " ships left! Opponent turn";
         };
         DB::commit();
         if ($this->getPlayerAliveBattleshipsAmount($room->id, $defender) === 0) {
+            $room->update(['player_turn' => null]);
             $message = "Every enemy ship destroyed! You Won!";
         }
 
         return $message;
     }
 
-    private function setPlayerBattleship($battleship, $request, $room)
+    private function setPlayerBattleship(PlayerBattleship $battleship, Request $request, Room $room): bool
     {
         $gridY = range('A', 'J');
         $gridX = range(1, 10);
@@ -119,23 +115,19 @@ class BattleshipService
                 }
             }
         }
-        return 1;
+        return true;
     }
 
-    private function deleteBattleships($battleship_id)
+    private function deleteBattleships(int $battleshipId): bool
     {
-        $battleships = BattleshipPosition::where('player_battleship_id', $battleship_id)->get();
-        if (count($battleships) > 0) {
-            foreach ($battleships as $battleship) {
-                $battleship->delete();
-            };
-        }
+        $battleships = BattleshipPosition::where('player_battleship_id', $battleshipId)->delete();
 
-        return 1;
+        return true;
     }
 
-    private function checkIfFieldAvailable($room_id, $player_id, $field) {
-        $battleships = $this->getPlayerBattleships($room_id, $player_id);
+    private function checkIfFieldAvailable(int $roomId, int $playerId, string $field): bool
+    {
+        $battleships = PlayerBattleship::with('battleshipPositions')->where('room_id', $roomId)->where('player_id', $playerId)->get();
         foreach ($battleships as $battleship) {
             foreach ($battleship->battleshipPositions as $position) {
                 if ($position->field === $field) {
@@ -148,39 +140,31 @@ class BattleshipService
         return true;
     }
 
-    private function getPlayerBattleships($room_id, $player_id) 
+    public function getPlayerAliveBattleshipsAmount(int $roomId, int $playerId): int
     {
-        return PlayerBattleship::with('battleshipPositions')->where('room_id', $room_id)->where('player_id', $player_id)->get();
+        return PlayerBattleship::where('room_id', $roomId)->where('player_id', $playerId)->where('is_destroyed', 0)->count();
     }
 
-    public function getPlayerAliveBattleshipsAmount($room_id, $player_id) 
+    private function checkTurn(Room $room, int $playerId): bool
     {
-        return PlayerBattleship::where('room_id', $room_id)->where('player_id', $player_id)->where('is_destroyed', 0)->count();
+        if ($room->player_turn === null) throw new GameHasntStartedException;
+        if ($room->player_turn !== $playerId) throw new NotYourTurnException;
+            
+        return true;
     }
 
-    private function checkTurn($room, $player_id) 
+    private function checkShot(int $roomId, int $playerId, string $field): bool
     {
-        if ($room->player_turn === null) {
-            throw new GameHasntStartedException;
-        } else if ($room->player_turn === $player_id) {
-            return true;
-        } else {
-            throw new NotYourTurnException;
-        }
-    }
-
-    private function checkShot($room, $player_id, $field) 
-    {
-        if (PlayerShot::where('room_id', $room)->where('player_id', $player_id)->where('field', $field)->first() === null) {
-            PlayerShot::create([
-                'room_id' => $room,
-                'player_id' => $player_id,
-                'field'=> $field,
-            ]);
-
-            return true;
-        } else {
+        if(!is_null(PlayerShot::where('room_id', $roomId)->where('player_id', $playerId)->where('field', $field)->first())) {
             throw new FieldAlreadyShotException;
         }
+
+        PlayerShot::create([
+            'room_id' => $roomId,
+            'player_id' => $playerId,
+            'field'=> $field,
+        ]);
+
+        return true;
     }
 }

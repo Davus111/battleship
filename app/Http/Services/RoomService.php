@@ -9,7 +9,6 @@ use App\Models\PlayerShot;
 use App\Models\Room;
 use App\Models\User;
 use Exception;
-use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 
 class RoomService
@@ -63,7 +62,7 @@ class RoomService
     {
         DB::beginTransaction();
         $this->checkOwner($room->owner_id, $userId);
-        if ($this->battleshipService->getPlayerAliveBattleshipsAmount($room->id, $room->owner_id) !== 7 && $this->battleshipService->getPlayerAliveBattleshipsAmount($room->id, $room->player_id) !== 7 && $room->player_turn !== null) {
+        if ($this->battleshipService->getPlayerAliveBattleshipsAmount($room->id, $room->owner_id) !== 7 || $this->battleshipService->getPlayerAliveBattleshipsAmount($room->id, $room->player_id) !== 7 || $room->player_turn !== null) {
             throw new NotAllShipsSetException;
         };
 
@@ -76,8 +75,6 @@ class RoomService
     {
         DB::beginTransaction();
         $this->checkOwner($room->owner_id, $userId);
-        $room->update(['player_turn' => null]);
-
         PlayerBattleship::where('room_id', $room->id)->delete();
         PlayerShot::where('room_id', $room->id)->delete();
         DB::commit();
