@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Room;
+use DB;
 use Illuminate\Http\Request;
 use App\Http\Services\RoomService;
 
@@ -47,5 +48,23 @@ class RoomController extends Controller
     public function leave(Request $request, Room $room)
     {
         return $this->roomService->leave($request, $room);
+    }
+
+    public function start(Request $request, Room $room) {
+        try {
+            return response()->json($this->roomService->startRoom($room, $request->user->id));
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json($e->getMessage(), $e->getCode());
+        }
+    }
+
+    public function restart(Request $request, Room $room) {
+        try {
+            return response()->json($this->roomService->restartRoom($room, $request->user->id));
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json($e->getMessage(), $e->getCode());
+        }
     }
 }

@@ -2,12 +2,22 @@
 
 namespace App\Http\Services;
 
+use App\Exceptions\NotAllShipsSetException;
+use App\Exceptions\UserNotAuthorizedException;
+use App\Models\PlayerBattleship;
+use App\Models\PlayerShot;
 use App\Models\Room;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 
 class RoomService
 {
+    protected $battleshipService;
+
+    public function __construct(BattleshipService $battleshipService)
+    {
+        $this->battleshipService = $battleshipService;
+    }
 
     public function createRoom($request) 
     {
@@ -76,6 +86,47 @@ class RoomService
         } catch (QueryException $e) {
             DB::rollBack();
             return response()->json(['message' => 'An error occurred while leaving the room'], 500);
+        }
+    }
+
+    public function startRoom($room, $user_id)
+    {
+        DB::beginTransaction();
+        $this->checkOwner($room->owner_id, $user_id);
+        if ($this->battleshipService->getPlayerAliveBattleshipsAmount($room->id, $room->owner_id) === 7 && $this->battleshipService->getPlayerAliveBattleshipsAmount($room->id, $room->player_id) === 7 && $room->player_turn === null) {
+            $room->player_turn = $room->owner_id;
+            $room->save();
+            DB::commit();
+            return "Game has started, it is your turn";
+        } else {
+            throw new NotAllShipsSetException;
+        };
+    }
+
+    public function restartRoom($room, $user_id)
+    {
+        DB::beginTransaction();
+        $this->checkOwner($room->owner_id, $user_id);
+        $room->player_turn = null;
+        $room->save();
+
+        foreach (PlayerBattleship::where('room_id', $room->id)->get() as $playerBattleship) {
+            $playerBattleship->delete();
+        }
+        foreach (PlayerShot::where('room_id', $room->id)->get() as $playerShot) {
+            $playerShot->delete();
+        }
+        DB::commit();
+
+        return "Game has been restarted, place your ships again!";
+    }
+
+    private function checkOwner($owner_id, $user_id) 
+    {
+        if ($owner_id !== $user_id) {
+            throw new UserNotAuthorizedException;
+        } else {
+            return true;
         }
     }
 
