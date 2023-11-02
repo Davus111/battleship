@@ -37,4 +37,9 @@ class User extends Authenticatable
     protected $casts = [
         'password' => 'hashed',
     ];
+
+    public function room()
+    {
+        return $this->hasOne(Room::class);
+    }
 }
