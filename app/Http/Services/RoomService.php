@@ -7,150 +7,109 @@ use App\Exceptions\UserNotAuthorizedException;
 use App\Models\PlayerBattleship;
 use App\Models\PlayerShot;
 use App\Models\Room;
+use App\Models\User;
+use Exception;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 
 class RoomService
 {
-    protected $battleshipService;
 
-    public function __construct(BattleshipService $battleshipService)
+    public function __construct(private BattleshipService $battleshipService)
     {
-        $this->battleshipService = $battleshipService;
     }
 
-    public function createRoom($request) 
+    public function createRoom(User $user): string
     {
-        if ($this->userOwnsRoom($request->user->id)) {
-            return response()->json(['message' => 'You already own a room'], 403);
-        } else {
-            try {
-                DB::beginTransaction();
-                Room::create([
-                    'owner_id' => $request->user->id,
-                ]);
-            } catch (QueryException $e) {
-                DB::rollBack();
-                return response()->json(['message' => 'An error occurred while creating a room'], 500);
-            }
-            DB::commit();
-        }
+        if ($this->userOwnsRoom($user->id)) throw new Exception('You already own a room', 403);
 
-        return response()->json(['message' => 'Room created successfully'], 200);
-    }
-    
-
-    public function join($request, $room)
-    {
-        $user_id = $request->user->id;
-
-        if ($this->userOwnsRoom($user_id)) {
-            return response()->json(['message' => 'You already own a room'], 403);
-        } else if (!$room->is_open) {
-            return response()->json(['message' => 'This room is full'], 403);
-        } else {
-            try {
-                DB::beginTransaction();
-                $this->userIsInRoom($user_id);
-                $room->update([
-                    'player_id' => $user_id,
-                    'is_open' => 0,
-                ]);
-            } catch (QueryException $e) {
-                DB::rollBack();
-                return response()->json(['message' => 'An error occurred while joining the room'], 500);
-            }
-            DB::commit();
-        }
-
-        return response()->json(['message' => 'Room joined successfully'], 200);
+        Room::create([
+            'owner_id' => $user->id,
+        ]);
+        return 'Room created successfully';
     }
 
-    public function leave($request, $room)
+    public function join(int $userId, Room $room): string
     {
-        $user_id = $request->user->id;
+        if ($this->userOwnsRoom($userId)) throw new Exception('You already own a room', 403);
+        if (!$room->is_open) throw new Exception('This room is full', 403);
 
-        try {
+        DB::beginTransaction();
+        $this->isUserInRoom($userId);
+        $room->update([
+            'player_id' => $userId,
+            'is_open' => 0,
+        ]);
+        DB::commit();
+        return 'Room joined successfully';
+    }
+
+    public function leave(int $userId, $room): string
+    {
             DB::beginTransaction();
-            if ($this->userOwnsRoom($user_id)) {
+            if ($this->userOwnsRoom($userId)) {
                 $room->delete();
                 DB::commit();
 
-                return response()->json(['message' => 'You left and removed the room succesfully'], 200);
+                return 'You left and removed the room succesfully';
             } else {
                 $this->userLeaveRoom($room);
                 DB::commit();
-
-                return response()->json(['message' => 'You left the room'], 200);
+                return 'You left the room';
             }
-        } catch (QueryException $e) {
-            DB::rollBack();
-            return response()->json(['message' => 'An error occurred while leaving the room'], 500);
-        }
     }
 
-    public function startRoom($room, $user_id)
+    public function startRoom(Room $room, int $userId): string
     {
         DB::beginTransaction();
-        $this->checkOwner($room->owner_id, $user_id);
-        if ($this->battleshipService->getPlayerAliveBattleshipsAmount($room->id, $room->owner_id) === 7 && $this->battleshipService->getPlayerAliveBattleshipsAmount($room->id, $room->player_id) === 7 && $room->player_turn === null) {
-            $room->player_turn = $room->owner_id;
-            $room->save();
-            DB::commit();
-            return "Game has started, it is your turn";
-        } else {
+        $this->checkOwner($room->owner_id, $userId);
+        if ($this->battleshipService->getPlayerAliveBattleshipsAmount($room->id, $room->owner_id) !== 7 && $this->battleshipService->getPlayerAliveBattleshipsAmount($room->id, $room->player_id) !== 7 && $room->player_turn !== null) {
             throw new NotAllShipsSetException;
         };
+
+        $room->update(['player_turn' => $room->owner_id]);
+        DB::commit();
+        return "Game has started, it is your turn";
     }
 
-    public function restartRoom($room, $user_id)
+    public function restartRoom(Room $room, int $userId): string
     {
         DB::beginTransaction();
-        $this->checkOwner($room->owner_id, $user_id);
-        $room->player_turn = null;
-        $room->save();
+        $this->checkOwner($room->owner_id, $userId);
+        $room->update(['player_turn' => null]);
 
-        foreach (PlayerBattleship::where('room_id', $room->id)->get() as $playerBattleship) {
-            $playerBattleship->delete();
-        }
-        foreach (PlayerShot::where('room_id', $room->id)->get() as $playerShot) {
-            $playerShot->delete();
-        }
+        PlayerBattleship::where('room_id', $room->id)->delete();
+        PlayerShot::where('room_id', $room->id)->delete();
         DB::commit();
 
         return "Game has been restarted, place your ships again!";
     }
 
-    private function checkOwner($owner_id, $user_id) 
+    private function checkOwner(int $ownerId, int $userId): bool
     {
-        if ($owner_id !== $user_id) {
-            throw new UserNotAuthorizedException;
-        } else {
-            return true;
-        }
+        if ($ownerId !== $userId) throw new UserNotAuthorizedException;
+
+        return true;
     }
 
-    private function userOwnsRoom($userId)
+    private function userOwnsRoom(int $userId): bool
     {
         return Room::where('owner_id', $userId)->exists();
     }
 
-    private function userIsInRoom($userId)
+    private function isUserInRoom(int $userId): bool
     {
-        if (Room::where('player_id', $userId)->exists()) {
-            $this->userLeaveRoom(Room::where('player_id', $userId)->first());
-        }
+        if (!Room::where('player_id', $userId)->exists()) return false;
 
-        return 1;
+        $this->userLeaveRoom(Room::where('player_id', $userId)->first());
+        return false;
     }
 
-    private function userLeaveRoom($room)
+    private function userLeaveRoom(Room $room): bool
     {
-        $room->update([
+        return $room->update([
             'player_id' => null,
             'is_open' => 1,
         ]);
-
-        return 1;
     }
 }

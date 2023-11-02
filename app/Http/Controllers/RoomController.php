@@ -9,11 +9,8 @@ use App\Http\Services\RoomService;
 
 class RoomController extends Controller
 {
-    protected $roomService;
-
-    public function __construct(RoomService $roomService)
+    public function __construct(private RoomService $roomService)
     {
-        $this->roomService = $roomService;
     }
 
     /**
@@ -21,7 +18,13 @@ class RoomController extends Controller
      */
     public function index(Request $request)
     {
-        return Room::all();
+        //Contains all lobbies for user to choose
+        try {
+            return Room::all();
+        } catch(\Exception $e) {
+            DB::rollBack();
+            return response()->json($e->getMessage(), $e->getCode());
+        }
     }
 
     /**
@@ -29,7 +32,12 @@ class RoomController extends Controller
      */
     public function store(Request $request)
     {
-        return $this->roomService->createRoom($request);
+        try {
+            return response()->json($this->roomService->createRoom($request->user));
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json($e->getMessage(), $e->getCode());
+        }
     }
 
     /**
@@ -37,17 +45,33 @@ class RoomController extends Controller
      */
     public function show(Room $room)
     {
-        return $room;
+        //There we can return Grid (if necesary) and available battleships
+        try {
+            return $room;
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json($e->getMessage(), $e->getCode());
+        }
     }
 
     public function join(Request $request, Room $room)
     {
-        return $this->roomService->join($request, $room);
+        try {
+            return response()->json($this->roomService->join($request->user->id, $room));
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json($e->getMessage(), $e->getCode());
+        }
     }
 
     public function leave(Request $request, Room $room)
     {
-        return $this->roomService->leave($request, $room);
+        try {
+            return response()->json($this->roomService->leave($request->user->id, $room));
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json($e->getMessage(), $e->getCode());
+        }
     }
 
     public function start(Request $request, Room $room) {
