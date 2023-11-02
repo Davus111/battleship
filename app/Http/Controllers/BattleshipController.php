@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Http\Services\BattleshipService;
-use App\Models\PlayerBattleship;
 use App\Models\Room;
 use DB;
 use Illuminate\Http\Request;
@@ -18,7 +17,7 @@ class BattleshipController extends Controller
     public function setBattleship(Request $request, Room $room)
     {
         $request->validate([
-            'battleship_id' => 'required',
+            'battleship_id' => 'required|min:1|max:7|numeric',
             'field' => ['required', 'regex:/^[A-J](10|[1-9])$/'],
             'rotation' => 'required',
         ]);
